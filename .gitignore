@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+outputs/*.pth
+outputs/*.json
+outputs/*.png
+.DS_Store
