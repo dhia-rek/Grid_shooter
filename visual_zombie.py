@@ -27,7 +27,10 @@ import torch
 import pygame
 import pygame.gfxdraw
 
-from envs.zombie_env import ZombieEnv, ACTION_NAMES, GRID, MAX_STEPS, STAGE_NAMES, STAGE_DEFS
+from envs.grid_shooter_env import (
+    GridShooterEnv, ACTION_NAMES, GRID, MAX_STEPS, STAGE_NAMES, STAGE_DEFS,
+    DIR_DOWN, DIR_UP, DIR_RIGHT, DIR_LEFT,
+)
 from agent.reinforce_agent import PolicyNet, select_action, compute_returns, reinforce_loss
 
 # ── Layout ────────────────────────────────────────────────────────────────────
@@ -242,12 +245,31 @@ def draw_agent(screen, env):
     screen.blit(lbl, lbl.get_rect(center=(cx, cy)))
 
 
+_DIR_ARROW = {
+    DIR_DOWN:  ( 0,  1),
+    DIR_UP:    ( 0, -1),
+    DIR_RIGHT: ( 1,  0),
+    DIR_LEFT:  (-1,  0),
+}
+
+def _draw_dir_arrow(screen, cx, cy, d, col):
+    """Draw a small filled triangle inside the zombie cell indicating direction."""
+    dx, dy = _DIR_ARROW[d]
+    tip    = (cx + dx*14, cy + dy*14)
+    perp   = (-dy, dx)
+    base1  = (cx - dx*6 + perp[0]*6, cy - dy*6 + perp[1]*6)
+    base2  = (cx - dx*6 - perp[0]*6, cy - dy*6 - perp[1]*6)
+    pygame.draw.polygon(screen, col, [tip, base1, base2])
+
+
 def draw_zombies(screen, env):
     zcol = STAGE_COLS[env.stage]
     for z in env.zombies:
-        if not z[2] or z[1] < 0 or z[1] >= GRID:
+        if not z[2]:
             continue
         gx, gy = z[0], z[1]
+        if not (0 <= gx < GRID and 0 <= gy < GRID):
+            continue
         cx, cy = cell_center(gx, gy)
         px, py = cell_tl(gx, gy)
         m = 9
@@ -260,8 +282,11 @@ def draw_zombies(screen, env):
         for ex in [cx-6, cx+6]:
             pygame.gfxdraw.filled_circle(screen, ex, cy-4, 3, (255, 60, 60, 220))
             pygame.gfxdraw.filled_circle(screen, ex, cy-4, 1, (255, 200, 200, 255))
+        # direction arrow
+        arrow_col = tuple(min(255, c + 120) for c in zcol)
+        _draw_dir_arrow(screen, cx, cy + 6, z[3], arrow_col)
         lbl = _fnt_sm.render("Z", True, tuple(min(255, c+80) for c in zcol))
-        screen.blit(lbl, lbl.get_rect(center=(cx, cy+5)))
+        screen.blit(lbl, lbl.get_rect(center=(cx, cy - 6)))
 
 
 def draw_bullet(screen, env):
@@ -433,7 +458,7 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    env    = ZombieEnv(max_steps=max_steps)
+    env    = GridShooterEnv(max_steps=max_steps)
     obs, _ = env.reset(seed=seed)
     policy    = PolicyNet(obs_dim=obs.shape[0], n_actions=env.action_space.n)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)

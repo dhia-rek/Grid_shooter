@@ -1,8 +1,8 @@
 # Grid Shooter — REINFORCE Agent
 
 A reinforcement learning project implementing the REINFORCE policy gradient
-algorithm on two custom Gymnasium environments: a classic grid shooter and
-a staged zombie shooter with escalating difficulty.
+algorithm on a custom Gymnasium environment: a staged zombie shooter with
+escalating difficulty and multi-directional enemies.
 
 ---
 
@@ -10,24 +10,16 @@ a staged zombie shooter with escalating difficulty.
 
 ```
 Grid_shooter/
-├── envs/                      # Custom Gymnasium environments
-│   ├── grid_shooter_env.py    # Original 1v1 grid shooter (6x6)
-│   └── zombie_env.py          # Staged zombie shooter (8x8, 4 stages)
+├── envs/
+│   └── grid_shooter_env.py    # Staged zombie shooter (8×8, 4 stages, 4 directions)
 │
 ├── agent/
 │   └── reinforce_agent.py     # REINFORCE: PolicyNet, loss, returns
 │
-├── outputs/                   # Saved models, plots, metrics (auto-generated)
+├── outputs/                   # Saved models (auto-generated)
 │
-├── train.py                   # Train on grid shooter (terminal)
-├── demo.py                    # Watch trained agent play (terminal)
-├── plot.py                    # Generate training curve plots
-├── compare.py                 # Random vs REINFORCE comparison
-├── visual_train.py            # Train grid shooter with live Pygame visuals
-├── visual_zombie.py           # Train zombie shooter with live Pygame visuals
-│
-├── requirements.txt
-└── README.md
+├── visual_zombie.py           # Main entry point — live Pygame training visualiser
+└── requirements.txt
 ```
 
 ---
@@ -35,46 +27,50 @@ Grid_shooter/
 ## Quick Start
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
 
-# --- Grid Shooter (original) ---
-python train.py --episodes 2000          # train (terminal output)
-python demo.py                           # watch the agent play
-python plot.py                           # generate training curves
-python compare.py                        # random vs trained comparison
-
-# Live visual training (recommended)
-python visual_train.py --episodes 2000
-
-# --- Zombie Shooter (staged, infinite last stage) ---
-python visual_zombie.py --episodes 3000
+python visual_zombie.py                              # 3000 episodes, full render
 python visual_zombie.py --episodes 5000 --render_every 5   # faster
 ```
 
 ---
 
-## Environments
+## Environment — `GridShooterEnv`
 
-### Grid Shooter (`envs/grid_shooter_env.py`)
-- 6×6 grid, 1 agent vs 1 moving enemy
-- Actions: UP / DOWN / LEFT / RIGHT / SHOOT / WAIT
-- Rewards: +10 kill, −10 die, −0.1/step, +0.5 aligned shot
-- Episode ends on kill, death, or timeout (50 steps)
+- **8×8 grid**, agent starts at bottom-centre
+- **Actions**: UP / DOWN / LEFT / RIGHT / SHOOT / WAIT
+- **Bullet**: fires upward; hits any zombie in its column path
+- **Episode**: ends when a zombie reaches the agent (no time limit)
 
-### Zombie Shooter (`envs/zombie_env.py`)
-- 8×8 grid, infinite zombie spawns
-- 4 escalating stages based on kill count:
+### Zombie directions (unlock per stage)
 
-| Stage | Name     | Advance at | Spawn rate | Zombie speed | Max active |
-|-------|----------|-----------|------------|--------------|------------|
-| 1     | Recruit  | 5 kills   | every 9 steps | every 10 | 3  |
-| 2     | Soldier  | 15 kills  | every 6 steps | every 7  | 5  |
-| 3     | Veteran  | 30 kills  | every 4 steps | every 5  | 7  |
-| 4     | INFINITE | —         | every 2 steps | every 3  | 10 |
+| Stage | Name     | Advance at | Directions active        | Spawn | Speed | Max |
+|-------|----------|-----------|--------------------------|-------|-------|-----|
+| 1     | Recruit  | 5 kills   | ↓ top only               | /9    | /10   | 3   |
+| 2     | Soldier  | 15 kills  | ↓ top + ← → sides       | /6    | /7    | 5   |
+| 3     | Veteran  | 30 kills  | ↓ ↑ ← → all 4 dirs      | /4    | /5    | 7   |
+| 4     | INFINITE | —         | ↓ ↑ ← → all 4 dirs      | /2    | /3    | 10  |
 
-- No timer — episode ends only when a zombie reaches the agent
-- Kill reward scales with stage: +10 / +15 / +20 / +25
+Each zombie displays a direction arrow (↑ ↓ ← →) in the Pygame window.
+
+### Observation vector (47 floats)
+
+| Slice      | Contents                                       |
+|------------|------------------------------------------------|
+| `[0:2]`    | Agent position (x/G, y/G)                      |
+| `[2:5]`    | Bullet (x/G, y/G, active)                      |
+| `[5:45]`   | 10 zombie slots × 4: (x/G, y/G, alive, dir/3) |
+| `[45]`     | Stage (normalised 0–1)                         |
+| `[46]`     | Kill count (normalised, capped at 60)          |
+
+### Rewards
+
+| Event              | Reward                          |
+|--------------------|---------------------------------|
+| Kill a zombie      | +10 + 5×stage (scales up)       |
+| Aligned shot fired | +0.5                            |
+| Hit by zombie      | −20                             |
+| Per step           | −0.05                           |
 
 ---
 
@@ -82,37 +78,35 @@ python visual_zombie.py --episodes 5000 --render_every 5   # faster
 
 ```
 for each episode:
-    1. collect_episode()    — roll out π_θ(a|s), record (s, a, r, log π)
-    2. compute_returns()    — G_t = Σ γ^k · r_{t+k}  (discounted reward-to-go)
-    3. reinforce_loss()     — L = −Σ log π_θ(aₜ|sₜ) · Gₜ  (normalised)
-    4. optimizer.step()     — gradient ascent on expected return
+    1. collect_episode()   — roll out π_θ(a|s), record (s, a, r, log π)
+    2. compute_returns()   — G_t = Σ γ^k · r_{t+k}  (discounted reward-to-go)
+    3. reinforce_loss()    — L = −Σ log π_θ(aₜ|sₜ) · Gₜ  (normalised)
+    4. optimizer.step()    — gradient ascent on expected return
 ```
 
-Key hyperparameters:
-- `gamma = 0.99` (discount factor)
-- `lr = 1e-3` (Adam learning rate)
-- `hidden = 128` (policy network hidden layer size)
+Hyperparameters: `gamma=0.99`, `lr=1e-3`, `hidden=128`
 
 ---
 
-## Visual Controls (Pygame windows)
+## Visual Controls (Pygame)
 
-| Key | Action |
-|-----|--------|
-| `SPACE` | Toggle rendering on/off (speed up training) |
-| `+` / `-` | Render every N episodes |
-| `ESC` / `Q` | Quit |
+| Key       | Action                              |
+|-----------|-------------------------------------|
+| `SPACE`   | Toggle rendering on/off             |
+| `+` / `-` | Render every N episodes             |
+| `ESC`/`Q` | Quit                                |
 
 ---
 
-## Outputs
+## What We've Implemented
 
-All generated files are saved to `outputs/`:
+1. **Single unified environment** (`GridShooterEnv`) — consolidated from two separate envs into one staged zombie shooter.
+2. **Multi-directional zombies** — zombies spawn from all 4 edges; directions unlock progressively per stage (top-only → top+sides → all 4).
+3. **Direction in observation** — each zombie slot includes a normalised direction value so the policy can distinguish approach angle.
+4. **Direction arrows in visualiser** — Pygame renderer draws a filled triangle on each zombie indicating its movement direction.
 
-| File | Generated by |
-|------|-------------|
-| `grid_shooter_policy.pth` | `train.py` / `visual_train.py` |
-| `zombie_policy.pth` | `visual_zombie.py` |
-| `training_history.json` | `train.py` |
-| `training_curves.png` | `plot.py` |
-| `comparison.png` / `.json` | `compare.py` |
+## What We're Doing Next
+
+- Directional shooting (agent fires toward last move direction)
+- Curriculum learning hooks (auto-tune stage thresholds based on performance)
+- Policy evaluation script adapted for the new env (kills/stage metrics)
