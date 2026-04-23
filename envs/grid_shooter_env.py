@@ -4,54 +4,80 @@ grid_shooter_env.py — Staged Grid Shooter (no timer, death-based episodes).
 Stages advance by kill count. Last stage is infinite max-difficulty.
 Episode ends only when a zombie reaches the agent.
 
-Stage 1 — Recruit   : kill  5 → advance  (top only)
+Stage 1 — Recruit   : kill  5 → advance  (zombies from top only)
 Stage 2 — Soldier   : kill 15 → advance  (top + sides)
 Stage 3 — Veteran   : kill 30 → advance  (all 4 directions)
 Stage 4 — INFINITE  : endless, max speed, all directions
+
+Actions (9):
+  0-3  Move:  UP / DOWN / LEFT / RIGHT
+  4-7  Shoot: SHOOT_UP / SHOOT_DOWN / SHOOT_LEFT / SHOOT_RIGHT
+  8    WAIT
 """
 
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-ACTION_UP    = 0
-ACTION_DOWN  = 1
-ACTION_LEFT  = 2
-ACTION_RIGHT = 3
-ACTION_SHOOT = 4
-ACTION_WAIT  = 5
+ACTION_UP          = 0
+ACTION_DOWN        = 1
+ACTION_LEFT        = 2
+ACTION_RIGHT       = 3
+ACTION_SHOOT_UP    = 4
+ACTION_SHOOT_DOWN  = 5
+ACTION_SHOOT_LEFT  = 6
+ACTION_SHOOT_RIGHT = 7
+ACTION_WAIT        = 8
 
 ACTION_NAMES = {
-    ACTION_UP: "UP", ACTION_DOWN: "DOWN", ACTION_LEFT: "LEFT",
-    ACTION_RIGHT: "RIGHT", ACTION_SHOOT: "SHOOT", ACTION_WAIT: "WAIT",
+    ACTION_UP:          "UP",
+    ACTION_DOWN:        "DOWN",
+    ACTION_LEFT:        "LEFT",
+    ACTION_RIGHT:       "RIGHT",
+    ACTION_SHOOT_UP:    "SHOOT ↑",
+    ACTION_SHOOT_DOWN:  "SHOOT ↓",
+    ACTION_SHOOT_LEFT:  "SHOOT ←",
+    ACTION_SHOOT_RIGHT: "SHOOT →",
+    ACTION_WAIT:        "WAIT",
 }
 
-# Zombie movement directions
-DIR_DOWN  = 0   # spawns at top row,    moves down
-DIR_UP    = 1   # spawns at bottom row, moves up
-DIR_RIGHT = 2   # spawns at left col,   moves right
-DIR_LEFT  = 3   # spawns at right col,  moves left
+# Bullet direction vectors per shoot action
+_SHOOT_VEC = {
+    ACTION_SHOOT_UP:    ( 0, -1),
+    ACTION_SHOOT_DOWN:  ( 0,  1),
+    ACTION_SHOOT_LEFT:  (-1,  0),
+    ACTION_SHOOT_RIGHT: ( 1,  0),
+}
+
+# Bullet direction index for obs encoding (UP=0 DOWN=1 LEFT=2 RIGHT=3)
+_VEC_TO_BDIR = {(0, -1): 0, (0, 1): 1, (-1, 0): 2, (1, 0): 3}
+
+# Zombie spawn directions
+DIR_DOWN  = 0   # spawns top,   moves down
+DIR_UP    = 1   # spawns bottom, moves up
+DIR_RIGHT = 2   # spawns left,  moves right
+DIR_LEFT  = 3   # spawns right, moves left
 
 DIR_NAMES = {DIR_DOWN: "↓", DIR_UP: "↑", DIR_RIGHT: "→", DIR_LEFT: "←"}
 
 # Per-stage allowed spawn directions
 STAGE_DIRS = [
-    [DIR_DOWN],                           # Stage 1 — top only
-    [DIR_DOWN, DIR_RIGHT, DIR_LEFT],      # Stage 2 — top + sides
-    [DIR_DOWN, DIR_UP, DIR_RIGHT, DIR_LEFT],  # Stage 3 — all 4
-    [DIR_DOWN, DIR_UP, DIR_RIGHT, DIR_LEFT],  # Stage 4 — all 4
+    [DIR_DOWN],
+    [DIR_DOWN, DIR_RIGHT, DIR_LEFT],
+    [DIR_DOWN, DIR_UP, DIR_RIGHT, DIR_LEFT],
+    [DIR_DOWN, DIR_UP, DIR_RIGHT, DIR_LEFT],
 ]
 
 GRID      = 8
-MAX_Z     = 10      # max zombie slots in state vector
-MAX_STEPS = 4000    # safety cap (very generous — effectively no timer)
+MAX_Z     = 10
+MAX_STEPS = 4000
 
-# Stage definitions: (kill_threshold_to_advance, spawn_every, zombie_move_every, max_active)
+# (kill_threshold, spawn_every, zombie_move_every, max_active)
 STAGE_DEFS = [
-    (  5,  9, 10,  3),   # Stage 1 — Recruit
-    ( 15,  6,  7,  5),   # Stage 2 — Soldier
-    ( 30,  4,  5,  7),   # Stage 3 — Veteran
-    (9999, 2,  3, 10),   # Stage 4 — INFINITE (never advances)
+    (  5,  9, 10,  3),
+    ( 15,  6,  7,  5),
+    ( 30,  4,  5,  7),
+    (9999, 2,  3, 10),
 ]
 STAGE_NAMES = ["Recruit", "Soldier", "Veteran", "∞  INFINITE"]
 
@@ -65,11 +91,10 @@ class GridShooterEnv(gym.Env):
         self.G         = grid_size
         self.max_steps = max_steps
 
-        self.action_space = spaces.Discrete(6)
+        self.action_space = spaces.Discrete(9)
 
-        # obs: agent(2) + bullet(3) + zombies(MAX_Z*4) + stage(1) + kills_norm(1)
-        # each zombie slot: (x/g, y/g, alive, dir/3)
-        obs_dim = 2 + 3 + MAX_Z * 4 + 1 + 1
+        # obs: agent(2) + bullet(4: x,y,active,dir/3) + zombies(MAX_Z*4) + stage(1) + kills(1)
+        obs_dim = 2 + 4 + MAX_Z * 4 + 1 + 1
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(obs_dim,), dtype=np.float32)
 
@@ -85,51 +110,57 @@ class GridShooterEnv(gym.Env):
 
     def step(self, action):
         self.steps += 1
-        reward = -0.05   # tiny step penalty
+        reward = -0.05
 
-        # 1. Agent action
-        _moves = {ACTION_UP:(0,-1), ACTION_DOWN:(0,1), ACTION_LEFT:(-1,0), ACTION_RIGHT:(1,0)}
+        # 1. Agent move
+        _moves = {
+            ACTION_UP:    ( 0, -1), ACTION_DOWN:  ( 0,  1),
+            ACTION_LEFT:  (-1,  0), ACTION_RIGHT: ( 1,  0),
+        }
         if action in _moves:
             dx, dy = _moves[action]
-            nx = np.clip(self.agent_pos[0] + dx, 0, self.G - 1)
-            ny = np.clip(self.agent_pos[1] + dy, 0, self.G - 1)
-            self.agent_pos[:] = [nx, ny]
-        elif action == ACTION_SHOOT and self.bullet is None:
-            self.bullet = np.array(
-                [self.agent_pos[0], self.agent_pos[1] - 1], dtype=np.int32)
-            if any(z[2] and z[0] == self.bullet[0] for z in self.zombies):
-                reward += 0.5   # alignment bonus
+            self.agent_pos[0] = int(np.clip(self.agent_pos[0] + dx, 0, self.G - 1))
+            self.agent_pos[1] = int(np.clip(self.agent_pos[1] + dy, 0, self.G - 1))
 
-        # 2. Move bullet up
+        # 2. Agent shoot
+        elif action in _SHOOT_VEC and self.bullet is None:
+            dx, dy = _SHOOT_VEC[action]
+            bx = self.agent_pos[0] + dx
+            by = self.agent_pos[1] + dy
+            if 0 <= bx < self.G and 0 <= by < self.G:
+                self.bullet = np.array([bx, by, dx, dy], dtype=np.int32)
+                if self._zombie_in_los(bx, by, dx, dy):
+                    reward += 0.5   # alignment bonus
+
+        # 3. Advance bullet
         if self.bullet is not None:
-            self.bullet[1] -= 1
+            bx, by, bdx, bdy = self.bullet
             for z in self.zombies:
-                if z[2] and z[0] == self.bullet[0] and z[1] == self.bullet[1]:
+                if z[2] and z[0] == bx and z[1] == by:
                     z[2] = 0
                     self.kills += 1
-                    kill_bonus = 10.0 + self.stage * 5.0
-                    reward += kill_bonus
+                    reward += 10.0 + self.stage * 5.0
                     self.bullet = None
                     break
-            if self.bullet is not None and self.bullet[1] < 0:
-                self.bullet = None
+            if self.bullet is not None:
+                nx, ny = bx + bdx, by + bdy
+                if 0 <= nx < self.G and 0 <= ny < self.G:
+                    self.bullet[:2] = [nx, ny]
+                else:
+                    self.bullet = None
 
-        # 3. Move zombies (speed depends on stage)
+        # 4. Move zombies
         _, _, zombie_step, _ = STAGE_DEFS[self.stage]
         if self.steps % zombie_step == 0:
             for z in self.zombies:
                 if not z[2]:
                     continue
-                if z[3] == DIR_DOWN:
-                    z[1] += 1
-                elif z[3] == DIR_UP:
-                    z[1] -= 1
-                elif z[3] == DIR_RIGHT:
-                    z[0] += 1
-                else:  # DIR_LEFT
-                    z[0] -= 1
+                if   z[3] == DIR_DOWN:  z[1] += 1
+                elif z[3] == DIR_UP:    z[1] -= 1
+                elif z[3] == DIR_RIGHT: z[0] += 1
+                else:                   z[0] -= 1  # DIR_LEFT
 
-        # 4. Check collisions
+        # 5. Collision check
         ax, ay = self.agent_pos
         for z in self.zombies:
             if z[2] and z[0] == ax and z[1] == ay:
@@ -137,25 +168,22 @@ class GridShooterEnv(gym.Env):
                 return self._obs(), reward, True, False, {
                     "result": "dead", "kills": self.kills, "stage": self.stage}
 
-        # 5. Purge dead / off-screen zombies
+        # 6. Purge off-screen / dead zombies
         self.zombies = [z for z in self.zombies if z[2] and self._on_screen(z)]
 
-        # 6. Spawn
+        # 7. Spawn
         _, spawn_every, _, max_active = STAGE_DEFS[self.stage]
         self.spawn_timer += 1
-        if self.spawn_timer >= spawn_every:
+        if self.spawn_timer >= spawn_every and len(self.zombies) < max_active:
             self.spawn_timer = 0
-            if len(self.zombies) < max_active:
-                self._spawn_zombie()
+            self._spawn_zombie()
 
-        # 7. Stage advancement
+        # 8. Stage advancement
         self.just_advanced = False
-        if self.stage < len(STAGE_DEFS) - 1:
-            threshold = STAGE_DEFS[self.stage][0]
-            if self.kills >= threshold:
-                self.stage += 1
-                self.just_advanced = True
-                self.spawn_timer = 0
+        if self.stage < len(STAGE_DEFS) - 1 and self.kills >= STAGE_DEFS[self.stage][0]:
+            self.stage += 1
+            self.just_advanced = True
+            self.spawn_timer = 0
 
         truncated = self.steps >= self.max_steps
         return self._obs(), reward, False, truncated, {
@@ -181,55 +209,61 @@ class GridShooterEnv(gym.Env):
         if d == DIR_DOWN:  return z[1] < self.G
         if d == DIR_UP:    return z[1] >= 0
         if d == DIR_RIGHT: return z[0] < self.G
-        return z[0] >= 0   # DIR_LEFT
+        return z[0] >= 0
+
+    def _zombie_in_los(self, bx, by, dx, dy):
+        """True if any zombie lies along the bullet's line of sight."""
+        for z in self.zombies:
+            if not z[2]:
+                continue
+            if dx == 0 and z[0] == bx and (dy * (z[1] - by) > 0):
+                return True
+            if dy == 0 and z[1] == by and (dx * (z[0] - bx) > 0):
+                return True
+        return False
 
     def _spawn_zombie(self):
-        G   = self.G
+        G  = self.G
         ax, ay = self.agent_pos
         dirs = STAGE_DIRS[self.stage]
         d    = dirs[int(self.np_random.integers(0, len(dirs)))]
 
         if d == DIR_DOWN:
-            x = int(self.np_random.integers(0, G))
-            y = 0
-            if y == ay and x == ax:
-                x = (x + 1) % G
+            x, y = int(self.np_random.integers(0, G)), 0
+            if x == ax and y == ay: x = (x + 1) % G
         elif d == DIR_UP:
-            x = int(self.np_random.integers(0, G))
-            y = G - 1
-            if y == ay and x == ax:
-                x = (x + 1) % G
+            x, y = int(self.np_random.integers(0, G)), G - 1
+            if x == ax and y == ay: x = (x + 1) % G
         elif d == DIR_RIGHT:
-            x = 0
-            y = int(self.np_random.integers(0, G))
-            if x == ax and y == ay:
-                y = (y + 1) % G
+            x, y = 0, int(self.np_random.integers(0, G))
+            if x == ax and y == ay: y = (y + 1) % G
         else:  # DIR_LEFT
-            x = G - 1
-            y = int(self.np_random.integers(0, G))
-            if x == ax and y == ay:
-                y = (y + 1) % G
+            x, y = G - 1, int(self.np_random.integers(0, G))
+            if x == ax and y == ay: y = (y + 1) % G
 
         self.zombies.append([x, y, 1, d])
 
     def _obs(self):
         g = float(self.G)
         ax, ay = self.agent_pos / g
+
         if self.bullet is not None:
-            bx, by, ba = self.bullet[0]/g, self.bullet[1]/g, 1.0
+            bx   = self.bullet[0] / g
+            by   = self.bullet[1] / g
+            ba   = 1.0
+            bdir = _VEC_TO_BDIR[(int(self.bullet[2]), int(self.bullet[3]))] / 3.0
         else:
-            bx, by, ba = 0.0, 0.0, 0.0
+            bx = by = ba = bdir = 0.0
 
         alive = sorted(
             [z for z in self.zombies if z[2]],
             key=lambda z: abs(z[0] - self.agent_pos[0]) + abs(z[1] - self.agent_pos[1])
         )
         slots = (alive + [[0, 0, 0, 0]] * MAX_Z)[:MAX_Z]
-        # 4 values per slot: x, y, alive, direction (normalised)
-        zobs = [v for z in slots
-                for v in (z[0]/g, z[1]/g, float(z[2]), z[3]/3.0)]
+        zobs  = [v for z in slots
+                 for v in (z[0]/g, z[1]/g, float(z[2]), z[3]/3.0)]
 
         stage_n = self.stage / (len(STAGE_DEFS) - 1)
         kills_n = min(self.kills / 60.0, 1.0)
-        return np.array([ax, ay, bx, by, ba] + zobs + [stage_n, kills_n],
+        return np.array([ax, ay, bx, by, ba, bdir] + zobs + [stage_n, kills_n],
                         dtype=np.float32)

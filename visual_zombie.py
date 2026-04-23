@@ -30,6 +30,8 @@ import pygame.gfxdraw
 from envs.grid_shooter_env import (
     GridShooterEnv, ACTION_NAMES, GRID, MAX_STEPS, STAGE_NAMES, STAGE_DEFS,
     DIR_DOWN, DIR_UP, DIR_RIGHT, DIR_LEFT,
+    ACTION_SHOOT_UP, ACTION_SHOOT_DOWN, ACTION_SHOOT_LEFT, ACTION_SHOOT_RIGHT,
+    ACTION_WAIT,
 )
 from agent.reinforce_agent import PolicyNet, select_action, compute_returns, reinforce_loss
 
@@ -292,13 +294,16 @@ def draw_zombies(screen, env):
 def draw_bullet(screen, env):
     if env.bullet is None:
         return
-    bx, by = env.bullet
-    if not (0 <= by < GRID):
+    bx, by, bdx, bdy = env.bullet
+    if not (0 <= bx < GRID and 0 <= by < GRID):
         return
     cx, cy = cell_center(bx, by)
+    # trail drawn behind the bullet (opposite of travel direction)
     for i in range(1, 6):
         alpha = int(160 * (1 - i/6))
-        pygame.gfxdraw.filled_circle(screen, cx, cy + i*7,
+        tx = cx - bdx * i * 7
+        ty = cy - bdy * i * 7
+        pygame.gfxdraw.filled_circle(screen, int(tx), int(ty),
                                      max(1, 4-i), (*BULLET_C, alpha))
     draw_glow(screen, BULLET_C, cx, cy, 7, steps=2)
     pygame.gfxdraw.filled_circle(screen, cx, cy, 5, (*BULLET_C, 255))
@@ -513,7 +518,7 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
         ep_return   = 0.0
         rewards_buf = []
         logprob_buf = []
-        last_action = 5
+        last_action = ACTION_WAIT
         prev_kills  = 0
         prev_stage  = 0
         z_snapshot  = []
