@@ -214,5 +214,8 @@ or zombies accumulate off-screen and inflate the active count incorrectly.
 
 Copyright © 2026 [dhia-rek](https://github.com/dhia-rek). All Rights Reserved.
 
-No part of this code may be copied, modified, distributed, or used without
-the express written permission of the author. See [LICENSE](LICENSE) for full terms.
+- No one can copy, modify, or distribute this code
+- No commercial use
+- Full control stays with the author
+
+See [LICENSE](LICENSE) for full terms.
