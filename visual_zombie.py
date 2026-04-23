@@ -50,21 +50,39 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
     policy    = PolicyNet(obs_dim=obs.shape[0], n_actions=env.action_space.n)
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
 
+    WEIGHTS_PATH = "outputs/zombie_policy.pth"
+    HISTORY_PATH = "outputs/training_history.json"
+
+    # auto-resume: load previous weights + history if they exist
+    if os.path.exists(WEIGHTS_PATH):
+        policy.load_state_dict(torch.load(WEIGHTS_PATH, weights_only=True))
+        print(f"Resumed from {WEIGHTS_PATH}")
+
     h_ep, h_ret, h_avg, h_kills = [], [], [], []
+    if os.path.exists(HISTORY_PATH):
+        with open(HISTORY_PATH) as f:
+            prev = json.load(f)
+        h_ep    = prev.get("episode", [])
+        h_ret   = prev.get("return",  [])
+        h_avg   = prev.get("avg50",   [])
+        h_kills = prev.get("kills",   [])
+
     window50   = deque(maxlen=50)
-    best_kills = 0
+    best_kills = int(max(h_kills)) if h_kills else 0
+    ep_offset  = h_ep[-1] if h_ep else 0
     rendering  = True
     re_freq    = render_every
+    quit_flag  = False
 
     # ── event handler ─────────────────────────────────────────────────────────
     def handle_events():
-        nonlocal rendering, re_freq
+        nonlocal rendering, re_freq, quit_flag
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
+                quit_flag = True
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_q):
-                    pygame.quit(); sys.exit()
+                    quit_flag = True
                 if event.key == pygame.K_SPACE:
                     rendering = not rendering
                 if event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
@@ -93,6 +111,8 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
     # ── training loop ─────────────────────────────────────────────────────────
     for ep in range(1, num_episodes + 1):
         handle_events()
+        if quit_flag:
+            break
         do_render = rendering and (ep % re_freq == 0 or ep == 1)
 
         obs, _ = env.reset(seed=seed + ep)
@@ -109,6 +129,8 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
 
         while not done:
             handle_events()
+            if quit_flag:
+                break
 
             action, log_prob = select_action(policy, obs)
             z_snapshot = [(z[0], z[1], z[2]) for z in env.zombies]
@@ -172,7 +194,7 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
         window50.append(ep_return)
 
         if ep % 10 == 0 or ep == 1:
-            h_ep.append(ep)
+            h_ep.append(ep_offset + ep)
             h_ret.append(ep_return)
             h_avg.append(float(np.mean(window50)))
             h_kills.append(float(kills))
@@ -181,26 +203,30 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
             render_frame(ep, ep_return, kills, last_action, env.stage)
             time.sleep(0.12)
 
-    # ── save weights, history, plots ──────────────────────────────────────────
+    # ── save weights, history, plots (always, even if interrupted) ───────────
     os.makedirs("outputs", exist_ok=True)
-    torch.save(policy.state_dict(), "outputs/zombie_policy.pth")
+    torch.save(policy.state_dict(), WEIGHTS_PATH)
 
-    history = {"episode": h_ep, "return": h_ret, "avg50": h_avg, "kills": h_kills}
-    with open("outputs/training_history.json", "w") as f:
-        json.dump(history, f, indent=2)
+    if h_ep:
+        history = {"episode": h_ep, "return": h_ret, "avg50": h_avg, "kills": h_kills}
+        with open(HISTORY_PATH, "w") as f:
+            json.dump(history, f, indent=2)
+        _save_plots(h_ep, h_ret, h_avg, h_kills)
 
-    _save_plots(h_ep, h_ret, h_avg, h_kills)
+    completed_ep = ep - 1 if quit_flag else num_episodes
 
     # ── final screen ──────────────────────────────────────────────────────────
     screen.fill(R.BG)
-    R.draw_panel(screen, num_episodes, num_episodes, env.stage,
+    R.draw_panel(screen, completed_ep, num_episodes, env.stage,
                  h_ep, h_ret, h_avg, h_kills, best_kills)
+    title = "Interrupted — Progress Saved!" if quit_flag else "Training Complete!"
+    title_col = R.TEXT_C if quit_flag else R.GOLD_C
     msgs = [
-        (R._fnt_xl, "Training Complete!",                        R.GOLD_C),
-        (R._fnt_lg, f"Best score: {best_kills} kills",           R.GREEN_C),
-        (R._fnt_sm, "outputs/zombie_policy.pth  — policy saved", R.TEXT_C),
-        (R._fnt_sm, "outputs/training_curves.png — plot saved",  R.TEXT_C),
-        (R._fnt_sm, "Press any key to exit",                     R.DIM_C),
+        (R._fnt_xl, title,                                                  title_col),
+        (R._fnt_lg, f"Trained {completed_ep}/{num_episodes} eps  |  Best: {best_kills} kills", R.GREEN_C),
+        (R._fnt_sm, "outputs/zombie_policy.pth  — policy saved",            R.TEXT_C),
+        (R._fnt_sm, "outputs/training_curves.png — plot saved",             R.TEXT_C),
+        (R._fnt_sm, "Press any key to exit",                                R.DIM_C),
     ]
     cy = R.PAD + R.GRID_PX // 2 - 60
     for fnt, txt, col in msgs:
@@ -216,10 +242,12 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
                 waiting = False
     pygame.quit()
 
+    print(f"Episodes trained: {completed_ep}/{num_episodes}")
     print(f"Best score: {best_kills} kills")
     print("Saved: outputs/zombie_policy.pth")
-    print("Saved: outputs/training_history.json")
-    print("Saved: outputs/training_curves.png")
+    if h_ep:
+        print("Saved: outputs/training_history.json")
+        print("Saved: outputs/training_curves.png")
     print("Run:   python view_policy.py   to watch the trained agent")
 
 

@@ -118,6 +118,7 @@ def reset_effects():
     """Clear all active particles and popups (call at episode start)."""
     _particles.clear()
     _popups.clear()
+    _zombie_sprites.clear()
 
 
 def spawn_particles(x, y, col, n=22):
@@ -222,42 +223,143 @@ def draw_grid_bg(screen, stage):
         pygame.draw.line(screen, GRID_COL, (PAD, y), (PAD + GRID_PX, y),       1)
 
 
-# ── Agent ─────────────────────────────────────────────────────────────────────
+# ── Agent sprite (generated once, cached) ────────────────────────────────────
+
+_agent_sprite = None
+
+
+def _make_agent_sprite(size):
+    s = pygame.Surface((size, size), pygame.SRCALPHA)
+    c = size // 2
+
+    # --- shadow layer ---
+    shadow = pygame.Surface((size, size), pygame.SRCALPHA)
+    pygame.draw.ellipse(shadow, (0, 0, 0, 60), (4, size // 2, size - 8, size // 2 - 2))
+    s.blit(shadow, (0, 0))
+
+    # --- left wing ---
+    lw = [(c - 3, c - 4), (c - 20, c + 14), (c - 10, c + 16), (c - 4, c + 4)]
+    pygame.draw.polygon(s, (20, 80, 180), lw)
+    pygame.draw.polygon(s, (60, 140, 255), lw, 1)
+
+    # --- right wing ---
+    rw = [(c + 3, c - 4), (c + 20, c + 14), (c + 10, c + 16), (c + 4, c + 4)]
+    pygame.draw.polygon(s, (20, 80, 180), rw)
+    pygame.draw.polygon(s, (60, 140, 255), rw, 1)
+
+    # --- engine exhaust glow ---
+    for r, a in [(9, 40), (6, 80), (4, 140)]:
+        pygame.gfxdraw.filled_circle(s, c, c + 18, r, (80, 160, 255, a))
+    pygame.gfxdraw.filled_circle(s, c, c + 18, 3, (200, 230, 255, 255))
+
+    # --- main hull ---
+    hull = [
+        (c,      4),           # nose
+        (c + 10, c - 6),       # right shoulder
+        (c + 8,  c + 14),      # right tail corner
+        (c,      c + 18),      # tail centre
+        (c - 8,  c + 14),      # left tail corner
+        (c - 10, c - 6),       # left shoulder
+    ]
+    pygame.draw.polygon(s, (30, 110, 220), hull)
+    pygame.draw.polygon(s, (100, 180, 255), hull, 2)
+
+    # --- cockpit glass ---
+    pygame.gfxdraw.filled_circle(s, c, c - 4, 9, (160, 220, 255, 210))
+    pygame.gfxdraw.filled_circle(s, c, c - 4, 9, (100, 180, 255, 255))  # rim
+    pygame.gfxdraw.filled_circle(s, c, c - 4, 7, (180, 230, 255, 180))  # inner fill
+    # shine dot
+    pygame.gfxdraw.filled_circle(s, c - 2, c - 7, 2, (255, 255, 255, 200))
+
+    # --- hull centre stripe ---
+    pygame.draw.line(s, (120, 200, 255), (c, c - 4 + 9), (c, c + 14), 2)
+
+    return s
+
 
 def draw_agent(screen, env):
+    global _agent_sprite
     ax, ay = env.agent_pos
     cx, cy = cell_center(ax, ay)
-    px, py = cell_tl(ax, ay)
-    m = 9
-    draw_glow(screen, AGENT_C, cx, cy, CELL // 2 - 8, steps=3)
-    rr(screen, (15, 55, 130), (px+m-2, py+m-2, CELL-m*2+4, CELL-m*2+4), 11)
-    rr(screen, AGENT_C,       (px+m,   py+m,   CELL-m*2,   CELL-m*2),   10)
-    pygame.draw.line(screen, AGENT_SH, (px+m+5, py+m+5), (px+m+5, py+CELL-m-5), 2)
-    lbl = _fnt_md.render("A", True, (230, 240, 255))
-    screen.blit(lbl, lbl.get_rect(center=(cx, cy)))
+
+    size = CELL - 14
+    if _agent_sprite is None or _agent_sprite.get_width() != size:
+        _agent_sprite = _make_agent_sprite(size)
+
+    draw_glow(screen, AGENT_C, cx, cy, CELL // 2 - 6, steps=3)
+    screen.blit(_agent_sprite, _agent_sprite.get_rect(center=(cx, cy)))
 
 
-# ── Zombies ───────────────────────────────────────────────────────────────────
+# ── Zombie sprite (one per stage, cached; rotated per direction) ──────────────
 
-_DIR_ARROW = {
-    DIR_DOWN:  ( 0,  1),
-    DIR_UP:    ( 0, -1),
-    DIR_RIGHT: ( 1,  0),
-    DIR_LEFT:  (-1,  0),
+_zombie_sprites: dict = {}  # keyed by stage index
+
+# Sprite is drawn facing UP by default; rotate to match movement direction.
+_DIR_ROTATE = {
+    DIR_UP:    0,
+    DIR_DOWN:  180,
+    DIR_LEFT:  -90,
+    DIR_RIGHT:  90,
 }
 
 
-def _draw_dir_arrow(screen, cx, cy, d, col):
-    dx, dy = _DIR_ARROW[d]
-    tip   = (cx + dx*14, cy + dy*14)
-    perp  = (-dy, dx)
-    base1 = (cx - dx*6 + perp[0]*6, cy - dy*6 + perp[1]*6)
-    base2 = (cx - dx*6 - perp[0]*6, cy - dy*6 - perp[1]*6)
-    pygame.draw.polygon(screen, col, [tip, base1, base2])
+def _make_zombie_sprite(size, col):
+    s = pygame.Surface((size, size), pygame.SRCALPHA)
+    c = size // 2
+    r = size // 2 - 1
+
+    # Outer glow halo
+    for ri, a in [(r + 4, 18), (r + 2, 35)]:
+        pygame.gfxdraw.filled_circle(s, c, c, ri, (*col, a))
+
+    # Dark body
+    body_col = tuple(max(0, x // 4) for x in col)
+    pygame.gfxdraw.filled_circle(s, c, c, r, (*body_col, 255))
+
+    # Mid-tone texture ring
+    mid_col = tuple(x // 2 for x in col)
+    for ri in range(r - 4, r - 1):
+        pygame.gfxdraw.aacircle(s, c, c, ri, (*mid_col, 120))
+
+    # Bright outline
+    pygame.gfxdraw.aacircle(s, c, c, r, (*col, 255))
+    pygame.gfxdraw.aacircle(s, c, c, r - 1, (*col, 180))
+
+    # Forehead scar (top, since sprite faces UP)
+    scar_col = tuple(min(255, x + 70) for x in col)
+    pygame.draw.lines(s, scar_col, False,
+                      [(c + 1, c - r + 5), (c - 1, c - r + 10), (c + 2, c - r + 16)], 1)
+
+    # Eyes — glowing red, near top of sprite (the "face" direction)
+    eye_y = c - r // 3
+    for ex in [c - r // 3, c + r // 3]:
+        pygame.gfxdraw.filled_circle(s, ex, eye_y, 6, (140, 10, 10, 255))
+        pygame.gfxdraw.filled_circle(s, ex, eye_y, 5, (255, 50, 50, 255))
+        pygame.gfxdraw.filled_circle(s, ex, eye_y, 3, (255, 140, 60, 255))
+        pygame.gfxdraw.filled_circle(s, ex, eye_y, 1, (255, 240, 200, 255))
+
+    # Mouth — jagged teeth, below centre
+    my = c + r // 4
+    mw = r - 5
+    pygame.draw.line(s, (60, 5, 5), (c - mw, my), (c + mw, my), 2)
+    tw = (mw * 2) // 4
+    for i in range(4):
+        tx = c - mw + i * tw
+        pts = [(tx + 1, my), (tx + tw // 2, my + 7), (tx + tw - 1, my)]
+        pygame.draw.polygon(s, (210, 205, 190), pts)
+        pygame.draw.polygon(s, (140, 135, 120), pts, 1)
+
+    return s
 
 
 def draw_zombies(screen, env):
     zcol = STAGE_COLS[env.stage]
+    size = CELL - 14
+
+    if env.stage not in _zombie_sprites:
+        _zombie_sprites[env.stage] = _make_zombie_sprite(size, zcol)
+    base_sprite = _zombie_sprites[env.stage]
+
     for z in env.zombies:
         if not z[2]:
             continue
@@ -265,20 +367,14 @@ def draw_zombies(screen, env):
         if not (0 <= gx < GRID and 0 <= gy < GRID):
             continue
         cx, cy = cell_center(gx, gy)
-        px, py = cell_tl(gx, gy)
-        m     = 9
-        pulse = 0.80 + 0.20 * math.sin(_tick * 0.14 + gx * 0.9)
-        col   = tuple(int(c * pulse) for c in zcol)
-        draw_glow(screen, zcol, cx, cy, CELL // 2 - 9, steps=2)
-        rr(screen, tuple(c // 4 for c in zcol), (px+m-2, py+m-2, CELL-m*2+4, CELL-m*2+4), 10)
-        rr(screen, col,                          (px+m,   py+m,   CELL-m*2,   CELL-m*2),   9)
-        for ex in [cx - 6, cx + 6]:
-            pygame.gfxdraw.filled_circle(screen, ex, cy - 4, 3, (255, 60, 60, 220))
-            pygame.gfxdraw.filled_circle(screen, ex, cy - 4, 1, (255, 200, 200, 255))
-        arrow_col = tuple(min(255, c + 120) for c in zcol)
-        _draw_dir_arrow(screen, cx, cy + 6, z[3], arrow_col)
-        lbl = _fnt_sm.render("Z", True, tuple(min(255, c + 80) for c in zcol))
-        screen.blit(lbl, lbl.get_rect(center=(cx, cy - 6)))
+
+        pulse = 0.75 + 0.25 * math.sin(_tick * 0.14 + gx * 0.9)
+        glow_col = tuple(int(x * pulse) for x in zcol)
+        draw_glow(screen, glow_col, cx, cy, CELL // 2 - 8, steps=2)
+
+        angle = _DIR_ROTATE[z[3]]
+        sprite = pygame.transform.rotate(base_sprite, angle) if angle != 0 else base_sprite
+        screen.blit(sprite, sprite.get_rect(center=(cx, cy)))
 
 
 # ── Bullet ────────────────────────────────────────────────────────────────────

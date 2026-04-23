@@ -110,7 +110,7 @@ class GridShooterEnv(gym.Env):
 
     def step(self, action):
         self.steps += 1
-        reward = -0.05
+        reward = 0.0
 
         # 1. Agent move
         _moves = {
