@@ -1,7 +1,7 @@
 # Grid Shooter — REINFORCE Agent
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![License](https://img.shields.io/badge/License-All%20Rights%20Reserved-red.svg)
 ![Reinforcement Learning](https://img.shields.io/badge/Algorithm-REINFORCE-green)
 ![Gymnasium](https://img.shields.io/badge/Env-Gymnasium-orange?logo=openai)
 ![Education](https://img.shields.io/badge/GitHub-Education-blue?logo=github)
@@ -212,6 +212,7 @@ or zombies accumulate off-screen and inflate the active count incorrectly.
 
 ## License
 
-MIT © 2026 [dhia-rek](https://github.com/dhia-rek)
+Copyright © 2026 [dhia-rek](https://github.com/dhia-rek). All Rights Reserved.
 
-See [LICENSE](LICENSE) for full terms. Free to use, modify, and share with attribution.
+No part of this code may be copied, modified, distributed, or used without
+the express written permission of the author. See [LICENSE](LICENSE) for full terms.
