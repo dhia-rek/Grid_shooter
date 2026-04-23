@@ -1,5 +1,15 @@
 # Grid Shooter — REINFORCE Agent
 
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Reinforcement Learning](https://img.shields.io/badge/Algorithm-REINFORCE-green)
+![Gymnasium](https://img.shields.io/badge/Env-Gymnasium-orange?logo=openai)
+![Education](https://img.shields.io/badge/GitHub-Education-blue?logo=github)
+
+> A hands-on reinforcement learning project built for learning.
+> Train a REINFORCE agent from scratch to survive a zombie shooter — watching it learn
+> to aim, dodge, and advance through escalating difficulty stages in real time.
+
 A reinforcement learning project implementing the REINFORCE policy gradient
 algorithm on a custom Gymnasium environment: a staged zombie shooter with
 escalating difficulty, multi-directional enemies, and directional shooting.
@@ -197,3 +207,11 @@ or zombies accumulate off-screen and inflate the active count incorrectly.
 | `SPACE`   | Toggle rendering on/off   |
 | `+` / `-` | Render every N episodes   |
 | `ESC`/`Q` | Quit                      |
+
+---
+
+## License
+
+MIT © 2026 [dhia-rek](https://github.com/dhia-rek)
+
+See [LICENSE](LICENSE) for full terms. Free to use, modify, and share with attribution.
