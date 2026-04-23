@@ -598,21 +598,88 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
             render_frame(ep, ep_return, kills, last_action, env.stage)
             time.sleep(0.12)
 
-    # ── done ─────────────────────────────────────────────────────────────────
+    # ── done — save weights + history, generate plots ────────────────────────
     os.makedirs("outputs", exist_ok=True)
     torch.save(policy.state_dict(), "outputs/zombie_policy.pth")
+
+    import json, matplotlib
+    matplotlib.use("Agg")   # no display needed for saving
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+
+    history = {"episode": h_ep, "return": h_ret, "avg50": h_avg, "kills": h_kills}
+    with open("outputs/training_history.json", "w") as f:
+        json.dump(history, f, indent=2)
+
+    # ── training curves plot ──────────────────────────────────────────────────
+    fig = plt.figure(figsize=(13, 8))
+    fig.suptitle("Grid Shooter — REINFORCE Training Curves", fontsize=13, fontweight="bold")
+    gs = gridspec.GridSpec(2, 2, hspace=0.42, wspace=0.32)
+
+    RAW_C  = "#4e79a7"
+    AVG_C  = "#f28e2b"
+    KIL_C  = "#59a14f"
+    ZERO_C = "#d3d3d3"
+
+    def _style(ax, xlabel, ylabel, title):
+        ax.set_xlabel(xlabel, fontsize=9)
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.set_title(title, fontsize=10, fontweight="bold")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.axhline(0, color=ZERO_C, linewidth=0.8, linestyle="--")
+        ax.legend(fontsize=8)
+
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.plot(h_ep, h_ret, color=RAW_C, alpha=0.6, linewidth=1.0, label="Episode return")
+    _style(ax1, "Episode", "Return", "1. Raw Episode Return")
+
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.plot(h_ep, h_ret, color=RAW_C, alpha=0.2, linewidth=0.8, label="Raw")
+    ax2.plot(h_ep, h_avg, color=AVG_C, linewidth=2.0, label="Avg last 50")
+    _style(ax2, "Episode", "Return", "2. Moving Average (50 eps)")
+
+    ax3 = fig.add_subplot(gs[1, 0])
+    ax3.plot(h_ep, h_kills, color=KIL_C, linewidth=1.5, label="Kills / episode")
+    ax3.fill_between(h_ep, h_kills, alpha=0.15, color=KIL_C)
+    _style(ax3, "Episode", "Kills", "3. Kills per Episode")
+
+    ax4 = fig.add_subplot(gs[1, 1])
+    if len(h_ret) >= 4:
+        q = len(h_ret) // 4
+        early = float(np.mean(h_ret[:q]))
+        late  = float(np.mean(h_ret[-q:]))
+        bars  = ax4.bar(["Early (first 25%)", "Late (last 25%)"],
+                        [early, late], color=[RAW_C, AVG_C],
+                        edgecolor="white", width=0.5)
+        for bar, val in zip(bars, [early, late]):
+            ax4.text(bar.get_x() + bar.get_width()/2,
+                     val + abs(val)*0.04,
+                     f"{val:+.2f}", ha="center", fontsize=9, fontweight="bold")
+        ax4.axhline(0, color=ZERO_C, linewidth=0.8, linestyle="--")
+        ax4.spines["top"].set_visible(False)
+        ax4.spines["right"].set_visible(False)
+        ax4.set_ylabel("Avg return", fontsize=9)
+        ax4.set_title("4. Early vs Late Performance", fontsize=10, fontweight="bold")
+
+    plt.savefig("outputs/training_curves.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+    # ── final Pygame screen ───────────────────────────────────────────────────
     screen.fill(BG)
     draw_panel(screen, num_episodes, num_episodes, env.stage,
                h_ep, h_ret, h_avg, h_kills, best_kills)
     msgs = [
-        _fnt_xl.render("Training Complete!",            True, GOLD_C),
-        _fnt_lg.render(f"Best score: {best_kills} kills  — Policy saved", True, GREEN_C),
-        _fnt_sm.render("Press any key to exit",         True, DIM_C),
+        _fnt_xl.render("Training Complete!",                         True, GOLD_C),
+        _fnt_lg.render(f"Best score: {best_kills} kills",            True, GREEN_C),
+        _fnt_sm.render("outputs/zombie_policy.pth  — policy saved",  True, TEXT_C),
+        _fnt_sm.render("outputs/training_curves.png — plot saved",   True, TEXT_C),
+        _fnt_sm.render("Press any key to exit",                      True, DIM_C),
     ]
-    cy = PAD + GRID_PX//2 - 40
+    cy = PAD + GRID_PX//2 - 60
     for s in msgs:
         screen.blit(s, s.get_rect(center=(PAD + GRID_PX//2, cy)))
-        cy += s.get_height() + 12
+        cy += s.get_height() + 10
     pygame.display.flip()
 
     waiting = True
@@ -621,7 +688,11 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
             if event.type in (pygame.QUIT, pygame.KEYDOWN):
                 waiting = False
     pygame.quit()
-    print(f"Best score: {best_kills} kills | Saved: outputs/zombie_policy.pth")
+    print(f"Best score: {best_kills} kills")
+    print("Saved: outputs/zombie_policy.pth")
+    print("Saved: outputs/training_history.json")
+    print("Saved: outputs/training_curves.png")
+    print("Run:   python view_policy.py   to watch the trained agent")
 
 
 if __name__ == "__main__":
