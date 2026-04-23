@@ -11,14 +11,39 @@ escalating difficulty, multi-directional enemies, and directional shooting.
 ```
 Grid_shooter/
 ├── envs/
-│   └── grid_shooter_env.py    # Staged zombie shooter (8×8, 4 stages, 4 directions)
+│   └── grid_shooter_env.py   # The game environment (rules, physics, rewards)
 ├── agent/
-│   └── reinforce_agent.py     # REINFORCE: PolicyNet, loss, returns
-├── outputs/                   # Saved models (auto-generated)
-├── visual_zombie.py           # Train with live Pygame visualiser
-├── view_policy.py             # Watch the trained agent play
-└── requirements.txt
+│   └── reinforce_agent.py    # The RL algorithm (PolicyNet, training functions)
+├── renderer.py               # All Pygame drawing code (visuals only, no game logic)
+├── visual_zombie.py          # Training entry point  (imports renderer + env + agent)
+├── view_policy.py            # Policy viewer         (imports renderer + env + agent)
+└── outputs/                  # Auto-generated: weights, history, plots
 ```
+
+### How the files relate
+
+```
+visual_zombie.py          view_policy.py
+  (training loop)           (greedy playback)
+       │                          │
+       ├──────────────────────────┤
+       │                          │
+       ▼                          ▼
+  renderer.py          ──►   renderer.py
+  (draws everything)         (draws everything)
+       │
+       ▼
+  envs/grid_shooter_env.py   agent/reinforce_agent.py
+  (game rules & state)       (policy network & REINFORCE)
+```
+
+**Why separated this way:**
+
+- `envs/grid_shooter_env.py` — pure game logic. No Pygame, no PyTorch. Knows nothing about how it is displayed or trained.
+- `agent/reinforce_agent.py` — pure RL code. `PolicyNet`, `select_action`, `compute_returns`, `reinforce_loss`. No Pygame, no game rules.
+- `renderer.py` — pure Pygame drawing. Takes the env state and draws it. Knows nothing about training or rewards.
+- `visual_zombie.py` — the glue for **training**: runs the REINFORCE loop, calls `renderer.py` to display each step, saves outputs when done.
+- `view_policy.py` — the glue for **watching**: loads saved weights, runs the agent greedily, calls `renderer.py` to display.
 
 ---
 
