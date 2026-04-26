@@ -64,7 +64,7 @@ def run(num_episodes=5, delay_ms=80, model_path="outputs/zombie_policy.pth", see
         R.draw_flash(screen)
         R.draw_stage_bar(screen, stage, kills)
         _draw_viewer_hud(screen, ep, num_episodes, kills, best_kills,
-                         ep_return, action, stage, result)
+                         stage, action, ep_return, result)
         pygame.display.flip()
 
     for ep in range(1, num_episodes + 1):

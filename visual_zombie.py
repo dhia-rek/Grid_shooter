@@ -17,7 +17,6 @@ Controls:
 import argparse
 import json
 import os
-import sys
 import time
 from collections import deque
 
@@ -55,8 +54,11 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
 
     # auto-resume: load previous weights + history if they exist
     if os.path.exists(WEIGHTS_PATH):
-        policy.load_state_dict(torch.load(WEIGHTS_PATH, weights_only=True))
-        print(f"Resumed from {WEIGHTS_PATH}")
+        try:
+            policy.load_state_dict(torch.load(WEIGHTS_PATH, weights_only=True))
+            print(f"Resumed from {WEIGHTS_PATH}")
+        except RuntimeError:
+            print(f"Architecture changed — starting fresh (ignoring {WEIGHTS_PATH})")
 
     h_ep, h_ret, h_avg, h_kills = [], [], [], []
     if os.path.exists(HISTORY_PATH):
@@ -66,6 +68,13 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
         h_ret   = prev.get("return",  [])
         h_avg   = prev.get("avg50",   [])
         h_kills = prev.get("kills",   [])
+
+    scheduler  = torch.optim.lr_scheduler.CosineAnnealingLR(
+                     optimizer, T_max=num_episodes, eta_min=1e-4)
+
+    # running EMA baseline — initialised from history so resume is smooth
+    EMA_ALPHA  = 0.05
+    ema_return = float(h_avg[-1]) if h_avg else 0.0
 
     window50   = deque(maxlen=50)
     best_kills = int(max(h_kills)) if h_kills else 0
@@ -122,6 +131,7 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
         ep_return   = 0.0
         rewards_buf = []
         logprob_buf = []
+        entropy_buf = []
         last_action = ACTION_WAIT
         prev_kills  = 0
         prev_stage  = 0
@@ -132,7 +142,7 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
             if quit_flag:
                 break
 
-            action, log_prob = select_action(policy, obs)
+            action, log_prob, entropy = select_action(policy, obs)
             z_snapshot = [(z[0], z[1], z[2]) for z in env.zombies]
 
             obs, reward, terminated, truncated, info = env.step(action)
@@ -141,6 +151,7 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
             last_action = action
             rewards_buf.append(reward)
             logprob_buf.append(log_prob)
+            entropy_buf.append(entropy)
             R.bump_tick()
 
             kills = info.get("kills", env.kills)
@@ -182,12 +193,20 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
                 render_frame(ep, ep_return, kills, last_action, stage)
                 clock.tick(30)
 
+        if quit_flag:
+            break
+
         # ── REINFORCE update ──────────────────────────────────────────────────
+        ema_return = EMA_ALPHA * ep_return + (1 - EMA_ALPHA) * ema_return
         returns = compute_returns(rewards_buf, gamma=gamma)
-        loss    = reinforce_loss(logprob_buf, returns, normalize=True)
+        loss    = reinforce_loss(logprob_buf, returns, normalize=True,
+                                 baseline=ema_return,
+                                 entropies=entropy_buf, entropy_coeff=0.01)
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
         optimizer.step()
+        scheduler.step()
 
         kills = info.get("kills", env.kills)
         best_kills = max(best_kills, kills)
@@ -235,11 +254,13 @@ def run(num_episodes=3000, gamma=0.99, lr=1e-3, max_steps=MAX_STEPS,
         cy += s.get_height() + 10
     pygame.display.flip()
 
-    waiting = True
-    while waiting:
-        for event in pygame.event.get():
-            if event.type in (pygame.QUIT, pygame.KEYDOWN):
-                waiting = False
+    headless = os.environ.get("SDL_VIDEODRIVER") == "dummy"
+    if not headless:
+        waiting = True
+        while waiting:
+            for event in pygame.event.get():
+                if event.type in (pygame.QUIT, pygame.KEYDOWN):
+                    waiting = False
     pygame.quit()
 
     print(f"Episodes trained: {completed_ep}/{num_episodes}")

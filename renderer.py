@@ -73,10 +73,6 @@ def bump_tick():
     _tick += 1
 
 
-def get_tick():
-    return _tick
-
-
 # ── Particle system ───────────────────────────────────────────────────────────
 class Particle:
     __slots__ = ("x", "y", "vx", "vy", "life", "max_life", "col", "size")

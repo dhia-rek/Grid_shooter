@@ -10,6 +10,10 @@
 > Train a REINFORCE agent from scratch to survive a zombie shooter — watching it learn
 > to aim, dodge, and advance through escalating difficulty stages in real time.
 
+**Authors:** Dhia Rekik · Akram Khattabi · Mahmoud Mekki
+**Course:** EM IA — Reinforcement Learning Project, April 2026
+**Supervisor:** F. DERRAZ
+
 A reinforcement learning project implementing the REINFORCE policy gradient
 algorithm on a custom Gymnasium environment: a staged zombie shooter with
 escalating difficulty, multi-directional enemies, and directional shooting.
@@ -66,6 +70,10 @@ pip install -r requirements.txt
 python visual_zombie.py
 python visual_zombie.py --episodes 5000 --render_every 5   # faster
 
+# Evaluate: trained vs stochastic vs random
+python evaluate.py
+python evaluate.py --episodes 200
+
 # Watch trained agent
 python view_policy.py
 python view_policy.py --episodes 10 --delay 120
@@ -97,7 +105,6 @@ direction misses entirely — the policy has to learn to aim.
 | Kill a zombie           | +10 + 5 × stage     |
 | Shoot aligned with zombie | +0.5 bonus        |
 | Hit by zombie           | −20 (terminal)      |
-| Per step                | −0.05               |
 
 Kill reward scales with stage so the agent keeps incentive to fight even
 as difficulty rises. The alignment bonus nudges early exploration toward
@@ -130,13 +137,15 @@ Directions unlock progressively so the agent is not overwhelmed from the start.
 
 ```
 for each episode:
-    1. collect_episode()   — roll out π_θ(a|s), record (s, a, r, log π)
+    1. roll out π_θ(a|s)   — record (s, a, r, log π, entropy) at each step
     2. compute_returns()   — G_t = Σ γ^k · r_{t+k}
     3. reinforce_loss()    — L = −Σ log π_θ(aₜ|sₜ) · Gₜ  (normalised)
-    4. optimizer.step()    — gradient ascent on expected return
+                               − β · H(π)   entropy bonus (β = 0.01)
+    4. clip_grad_norm_()   — gradient clipping (max norm 0.5) for stability
+    5. optimizer.step()    — gradient ascent on expected return
 ```
 
-Hyperparameters: `gamma=0.99` · `lr=1e-3` · `hidden=128`
+Hyperparameters: `gamma=0.99` · `lr=1e-3` · `hidden=256` · `entropy_coeff=0.01` · `grad_clip=0.5`
 
 ---
 
@@ -212,7 +221,7 @@ or zombies accumulate off-screen and inflate the active count incorrectly.
 
 ## License
 
-Copyright © 2026 [dhia-rek](https://github.com/dhia-rek). All Rights Reserved.
+Copyright © 2026 Dhia Rekik, Akram Khattabi, Mahmoud Mekki. All Rights Reserved.
 
 - No one can copy, modify, or distribute this code
 - No commercial use

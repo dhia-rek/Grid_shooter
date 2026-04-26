@@ -49,6 +49,14 @@ _SHOOT_VEC = {
     ACTION_SHOOT_RIGHT: ( 1,  0),
 }
 
+# Move direction vectors (module-level so step() doesn't rebuild each call)
+_MOVE_VEC = {
+    ACTION_UP:    ( 0, -1),
+    ACTION_DOWN:  ( 0,  1),
+    ACTION_LEFT:  (-1,  0),
+    ACTION_RIGHT: ( 1,  0),
+}
+
 # Bullet direction index for obs encoding (UP=0 DOWN=1 LEFT=2 RIGHT=3)
 _VEC_TO_BDIR = {(0, -1): 0, (0, 1): 1, (-1, 0): 2, (1, 0): 3}
 
@@ -57,8 +65,6 @@ DIR_DOWN  = 0   # spawns top,   moves down
 DIR_UP    = 1   # spawns bottom, moves up
 DIR_RIGHT = 2   # spawns left,  moves right
 DIR_LEFT  = 3   # spawns right, moves left
-
-DIR_NAMES = {DIR_DOWN: "↓", DIR_UP: "↑", DIR_RIGHT: "→", DIR_LEFT: "←"}
 
 # Per-stage allowed spawn directions
 STAGE_DIRS = [
@@ -113,12 +119,8 @@ class GridShooterEnv(gym.Env):
         reward = 0.0
 
         # 1. Agent move
-        _moves = {
-            ACTION_UP:    ( 0, -1), ACTION_DOWN:  ( 0,  1),
-            ACTION_LEFT:  (-1,  0), ACTION_RIGHT: ( 1,  0),
-        }
-        if action in _moves:
-            dx, dy = _moves[action]
+        if action in _MOVE_VEC:
+            dx, dy = _MOVE_VEC[action]
             self.agent_pos[0] = int(np.clip(self.agent_pos[0] + dx, 0, self.G - 1))
             self.agent_pos[1] = int(np.clip(self.agent_pos[1] + dy, 0, self.G - 1))
 
